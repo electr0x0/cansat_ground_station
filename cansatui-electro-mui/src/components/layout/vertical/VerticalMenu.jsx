@@ -56,9 +56,10 @@ const VerticalMenu = ({ scrollMenu }) => {
         renderExpandedMenuItemIcon={{ icon: <i className='tabler-circle text-xs' /> }}
         menuSectionStyles={menuSectionStyles(verticalNavOptions, theme)}
       >
-        <MenuItem href='/home' icon={<i className='tabler-space' />}>
+        <MenuItem href='/home' icon={<i className='tabler-meteor' />}>
           Cansat Home
         </MenuItem>
+        <MenuItem href='/history' icon={<i className='tabler-history' />}>Metrics History</MenuItem>
       </Menu>
       {/* <Menu
           popoutMenuOffset={{ mainAxis: 23 }}

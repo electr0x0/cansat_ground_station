@@ -16,7 +16,7 @@
  * Another way is to clear the cookie from the browser's Application/Storage tab and then reload the page.
  */
 const themeConfig = {
-  templateName: 'Cansat-3D',
+  templateName: 'Cansat Groundstation',
   homePageUrl: '/home',
   settingsCookieName: 'cansat-3d-mui-next-demo-1',
   mode: 'system', // 'system', 'light', 'dark'

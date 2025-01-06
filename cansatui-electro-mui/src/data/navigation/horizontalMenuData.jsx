@@ -8,6 +8,11 @@ const horizontalMenuData = () => [
     label: 'Cansat',
     href: '/cansat',
     icon: 'tabler-space'
+  },
+  {
+    label: 'History',
+    href: '/history',
+    icon: 'tabler-history'
   }
 ]
 

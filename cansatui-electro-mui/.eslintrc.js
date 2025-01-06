@@ -1,9 +1,11 @@
 module.exports = {
   "extends": [
+    "next/babel",
     "next/core-web-vitals",
     "plugin:import/recommended",
     "prettier"
   ],
+  "parser": "babel-eslint",
   "rules": {
     "jsx-a11y/alt-text": "off",
     "react/display-name": "off",

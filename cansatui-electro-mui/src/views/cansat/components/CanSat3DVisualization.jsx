@@ -16,7 +16,7 @@ import {
   AdaptiveEvents,
   Preload
 } from '@react-three/drei'
-import { TextureLoader, Vector3, RepeatWrapping } from 'three'
+import { TextureLoader, Vector3, RepeatWrapping, Euler, MathUtils } from 'three'
 import Card from '@mui/material/Card'
 import CardHeader from '@mui/material/CardHeader'
 import CardContent from '@mui/material/CardContent'
@@ -25,8 +25,12 @@ import FormControlLabel from '@mui/material/FormControlLabel'
 import Slider from '@mui/material/Slider'
 import Box from '@mui/material/Box'
 import Typography from '@mui/material/Typography'
+import { IconButton, Tooltip } from '@mui/material'
+import { Icon } from '@iconify/react'
+import html2canvas from 'html2canvas'
+import jsPDF from 'jspdf'
 
-// Camera controller with stable following
+// Modified CameraController for smoother following and better sensitivity
 const CameraController = ({ target, followCansat }) => {
   const { camera } = useThree()
   const orbitControlsRef = useRef()
@@ -35,17 +39,18 @@ const CameraController = ({ target, followCansat }) => {
   useFrame((state, delta) => {
     if (followCansat) {
       if (isInitialPosition.current) {
-        camera.position.set(-60, target.z + 30, 60)
+        // Adjusted initial camera position for better view
+        camera.position.set(-30, target.z + 15, 30)
         camera.lookAt(target.x, target.z, target.y)
         isInitialPosition.current = false
       }
 
-      // Fixed camera height offset to prevent up/down motion
+      // More sensitive camera movement
       const targetPosition = new Vector3(target.x, target.z, target.y)
-      const idealOffset = new Vector3(-60, target.z + 30, 60)
-
-      // Smoother camera movement with fixed vertical offset
-      camera.position.lerp(idealOffset, 0.05)
+      const idealOffset = new Vector3(-30, target.z + 15, 30)
+      
+      // Increased lerp factor for more responsive movement
+      camera.position.lerp(idealOffset, 0.1)
       camera.lookAt(targetPosition)
     }
   })
@@ -55,9 +60,9 @@ const CameraController = ({ target, followCansat }) => {
       ref={orbitControlsRef}
       enablePan={true}
       maxPolarAngle={Math.PI / 1.5}
-      minDistance={10}
-      maxDistance={1000}
-      zoomSpeed={0.5}
+      minDistance={5} // Reduced minimum distance
+      maxDistance={500} // Reduced maximum distance
+      zoomSpeed={1} // Increased zoom speed
       enabled={!followCansat}
       enableDamping={true}
       dampingFactor={0.05}
@@ -65,14 +70,35 @@ const CameraController = ({ target, followCansat }) => {
   )
 }
 
-// CanSat with fixed coordinate system
-const CanSat = ({ position, trajectory, showTrajectory }) => {
+// Add this new helper for interpolation
+const lerp = (start, end, factor) => {
+  return start + (end - start) * factor
+}
+
+// Updated CanSat component with smooth interpolation
+const CanSat = ({ position, trajectory, showTrajectory, gyroData }) => {
   const meshRef = useRef()
+  const modelRef = useRef()
   const trailRef = useRef()
   const [modelLoaded, setModelLoaded] = useState(false)
+  
+  // Refs for smooth interpolation
+  const currentRotation = useRef({ x: 0, y: 0, z: 0 })
+  const targetRotation = useRef({ x: 0, y: 0, z: 0 })
+  const currentPosition = useRef(new Vector3(position[0], position[1], position[2]))
+  const targetPosition = useRef(new Vector3(position[0], position[1], position[2]))
 
-  // Convert coordinates to fixed system
-  const canSatPosition = new Vector3(position[0], position[1], position[2])
+  // Update target values when new data arrives
+  useEffect(() => {
+    targetPosition.current = new Vector3(position[0], position[1], position[2])
+    
+    // Convert gyro data to cumulative rotation
+    targetRotation.current = {
+      x: targetRotation.current.x + gyroData.x * 0.01, // Adjust multiplier for rotation speed
+      y: targetRotation.current.y + gyroData.y * 0.01,
+      z: targetRotation.current.z + gyroData.z * 0.01
+    }
+  }, [position, gyroData])
 
   useEffect(() => {
     const loader = new GLTFLoader()
@@ -81,7 +107,15 @@ const CanSat = ({ position, trajectory, showTrajectory }) => {
       '/models/cansat.glb',
       gltf => {
         if (meshRef.current) {
-          meshRef.current.add(gltf.scene)
+          // Clear any existing model
+          while (meshRef.current.children.length) {
+            meshRef.current.remove(meshRef.current.children[0])
+          }
+          
+          // Add new model
+          modelRef.current = gltf.scene
+          modelRef.current.position.set(0, 0, 0)
+          meshRef.current.add(modelRef.current)
           setModelLoaded(true)
         }
       },
@@ -93,8 +127,35 @@ const CanSat = ({ position, trajectory, showTrajectory }) => {
     )
   }, [])
 
+  // Smooth interpolation in animation frame
+  useFrame((state, delta) => {
+    if (meshRef.current && modelLoaded) {
+      // Smooth position interpolation
+      const lerpFactor = 0.1 // Adjust for smoother/faster movement
+      
+      currentPosition.current.x = lerp(currentPosition.current.x, targetPosition.current.x, lerpFactor)
+      currentPosition.current.y = lerp(currentPosition.current.y, targetPosition.current.y, lerpFactor)
+      currentPosition.current.z = lerp(currentPosition.current.z, targetPosition.current.z, lerpFactor)
+      
+      meshRef.current.position.copy(currentPosition.current)
+
+      // Smooth rotation interpolation
+      const rotationLerpFactor = 0.15 // Adjust for smoother/faster rotation
+      
+      currentRotation.current = {
+        x: lerp(currentRotation.current.x, targetRotation.current.x, rotationLerpFactor),
+        y: lerp(currentRotation.current.y, targetRotation.current.y, rotationLerpFactor),
+        z: lerp(currentRotation.current.z, targetRotation.current.z, rotationLerpFactor)
+      }
+
+      meshRef.current.rotation.x = currentRotation.current.x
+      meshRef.current.rotation.y = currentRotation.current.y
+      meshRef.current.rotation.z = currentRotation.current.z
+    }
+  })
+
   return (
-    <group position={canSatPosition}>
+    <group>
       <Trail ref={trailRef} width={2} length={50} color={'#00ff00'} attenuation={t => t * t} interval={1}>
         <mesh ref={meshRef} scale={0.2}>
           {!modelLoaded && (
@@ -123,34 +184,38 @@ const CanSat = ({ position, trajectory, showTrajectory }) => {
   )
 }
 
-// Height marker with better visibility
-const HeightMarker = ({ height }) => {
+// Modified HeightMarker component to highlight current altitude
+const HeightMarker = ({ height, isCurrentHeight }) => {
   return (
-    <group position={[-20, height, 0]}>
+    <group position={[-10, height, 0]}>
       <Text
         position={[0, 0, 0]}
-        fontSize={2}
-        color='white'
+        fontSize={isCurrentHeight ? 2 : 1.5} // Larger font for current height
+        color={isCurrentHeight ? '#00ff00' : 'white'} // Green color for current height
         anchorX='left'
         outlineWidth={0.1}
-        outlineColor='black'
+        outlineColor={isCurrentHeight ? '#003300' : 'black'}
         outlineOpacity={1}
-        backgroundColor='rgba(0,0,0,0.5)'
+        backgroundColor={isCurrentHeight ? 'rgba(0,255,0,0.2)' : 'rgba(0,0,0,0.5)'}
         padding={0.5}
       >
         {height}m
       </Text>
-      {/* Add horizontal line for better reference */}
       <line>
         <bufferGeometry>
           <bufferAttribute
             attach='attributes-position'
             count={2}
-            array={new Float32Array([-20, 0, 0, 20, 0, 0])}
+            array={new Float32Array([-10, 0, 0, 10, 0, 0])}
             itemSize={3}
           />
         </bufferGeometry>
-        <lineBasicMaterial color='#ffffff' linewidth={2} opacity={0.3} transparent />
+        <lineBasicMaterial 
+          color={isCurrentHeight ? '#00ff00' : '#ffffff'} 
+          linewidth={isCurrentHeight ? 2 : 1} 
+          opacity={isCurrentHeight ? 0.8 : 0.3} 
+          transparent 
+        />
       </line>
     </group>
   )
@@ -211,8 +276,8 @@ const Atmosphere = () => {
   )
 }
 
-// Main visualization component
-const CanSat3DVisualization = ({ coordinates }) => {
+// Main visualization component with adjusted scale
+const CanSat3DVisualization = ({ coordinates, onStopFetch }) => {
   const [trajectory, setTrajectory] = useState([])
   const [followCansat, setFollowCansat] = useState(true)
   const [showTrajectory, setShowTrajectory] = useState(true)
@@ -243,45 +308,103 @@ const CanSat3DVisualization = ({ coordinates }) => {
     return timeSeriesData[index] || timeSeriesData[timeSeriesData.length - 1]
   }, [hasLanded, timeSeriesData, replayTime, coordinates])
 
+  // Generate height markers with current height highlight
+  const generateHeightMarkers = () => {
+    const markers = []
+    const maxHeight = Math.max(100, Math.ceil(currentData.coordinates.z / 5) * 5) // Adjust max height based on current altitude
+    const interval = 5 // Marker interval
+    const currentHeight = Math.round(currentData.coordinates.z)
+    
+    // Add regular interval markers
+    for (let height = 0; height <= maxHeight; height += interval) {
+      markers.push({
+        height,
+        isCurrentHeight: Math.abs(height - currentHeight) < interval / 2
+      })
+    }
+
+    // Add current height marker if not close to an interval
+    if (!markers.some(m => m.isCurrentHeight)) {
+      markers.push({
+        height: currentHeight,
+        isCurrentHeight: true
+      })
+    }
+
+    // Sort markers by height
+    return markers.sort((a, b) => a.height - b.height)
+  }
+
+  const handleExport = async () => {
+    const canvas = await html2canvas(document.querySelector('#visualization-container'))
+    const imgData = canvas.toDataURL('image/png')
+    const pdf = new jsPDF()
+    
+    pdf.addImage(imgData, 'PNG', 0, 0)
+    pdf.save('cansat-visualization.pdf')
+  }
+
   return (
-    <Card>
-      <CardHeader
-        title='CanSat Live Trajectory'
-        subheader={`Altitude: ${currentData.coordinates.z.toFixed(2)}m`}
+    <Card 
+      sx={{ 
+        backdropFilter: 'blur(20px)',
+        backgroundColor: theme => theme.palette.mode === 'dark' 
+          ? 'rgba(35, 35, 35, 0.9)' 
+          : 'rgba(255, 255, 255, 0.9)',
+        border: theme => `1px solid ${theme.palette.divider}`,
+        overflow: 'visible'
+      }}
+    >
+      <CardHeader 
+        title='CanSat Visualization'
         action={
-          <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
-            {hasLanded && (
-              <>
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={showTrajectory}
-                      onChange={e => setShowTrajectory(e.target.checked)}
-                      color='secondary'
-                    />
-                  }
-                  label='Show Path'
-                />
-              </>
-            )}
+          <Box sx={{ display: 'flex', gap: 2, alignItems: 'center' }}>
             <FormControlLabel
               control={
-                <Switch checked={followCansat} onChange={e => setFollowCansat(e.target.checked)} color='primary' />
+                <Switch
+                  checked={followCansat}
+                  onChange={e => setFollowCansat(e.target.checked)}
+                  color="primary"
+                />
               }
-              label='Follow CanSat'
+              label="Follow CanSat"
             />
-          </div>
+            <Tooltip title="Stop Live Updates">
+              <IconButton 
+                onClick={onStopFetch}
+                color="error"
+                sx={{ 
+                  backdropFilter: 'blur(10px)',
+                  backgroundColor: 'rgba(255, 0, 0, 0.1)'
+                }}
+              >
+                <Icon icon="mdi:stop-circle-outline" />
+              </IconButton>
+            </Tooltip>
+            <Tooltip title="Export Visualization">
+              <IconButton 
+                onClick={handleExport}
+                color="primary"
+                sx={{ 
+                  backdropFilter: 'blur(10px)',
+                  backgroundColor: 'rgba(25, 118, 210, 0.1)'
+                }}
+              >
+                <Icon icon="mdi:export" />
+              </IconButton>
+            </Tooltip>
+          </Box>
         }
       />
-      <CardContent>
+      <CardContent id="visualization-container">
         <div style={{ height: '600px', position: 'relative' }}>
           <Canvas
             shadows
             camera={{
-              position: [-60, currentData.coordinates.z + 30, 60],
-              fov: 45,
+              position: [-30, currentData.coordinates.z + 15, 30],
+              fov: 60,
               near: 0.1,
-              far: 10000
+              far: 1000
             }}
             frameloop='always'
             gl={{
@@ -299,20 +422,33 @@ const CanSat3DVisualization = ({ coordinates }) => {
 
             <Atmosphere />
             <CanSat
-              position={[currentData.coordinates.x, currentData.coordinates.z, currentData.coordinates.y]}
+              position={[
+                currentData.coordinates.x,
+                currentData.coordinates.z,
+                currentData.coordinates.y
+              ]}
               trajectory={currentData.trajectory}
               showTrajectory={followCansat || (hasLanded && showTrajectory)}
+              gyroData={{
+                x: coordinates.gyro_x || 0,
+                y: coordinates.gyro_y || 0,
+                z: coordinates.gyro_z || 0
+              }}
             />
             <Ground />
             <CameraController target={currentData.coordinates} followCansat={followCansat} />
 
-            {/* Height Markers */}
-            {[25, 50, 75, 100, 125, 150, 175, 200, 225, 250, 275, 300, 325, 350, 375, 400].map(height => (
-              <HeightMarker key={height} height={height} />
+            {/* Updated height markers */}
+            {generateHeightMarkers().map(({ height, isCurrentHeight }) => (
+              <HeightMarker 
+                key={height} 
+                height={height} 
+                isCurrentHeight={isCurrentHeight}
+              />
             ))}
           </Canvas>
 
-          {/* Overlay Information */}
+          {/* Updated overlay information with more precision */}
           <div
             style={{
               position: 'absolute',
@@ -325,9 +461,9 @@ const CanSat3DVisualization = ({ coordinates }) => {
               fontFamily: 'monospace'
             }}
           >
-            <div>X: {currentData.coordinates.x.toFixed(2)}m</div>
-            <div>Y: {currentData.coordinates.y.toFixed(2)}m</div>
-            <div>Z: {currentData.coordinates.z.toFixed(2)}m</div>
+            <div>X: {currentData.coordinates.x.toFixed(3)}m</div>
+            <div>Y: {currentData.coordinates.y.toFixed(3)}m</div>
+            <div>Z: {currentData.coordinates.z.toFixed(3)}m</div>
           </div>
         </div>
 
